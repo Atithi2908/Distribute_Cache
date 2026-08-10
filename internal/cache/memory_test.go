@@ -1,6 +1,10 @@
 package cache
 
-import "testing"
+import (
+	"fmt"
+	"sync"
+	"testing"
+)
 
 func TestMemoryCacheSetGet(t *testing.T) {
 	tests := []struct {
@@ -95,4 +99,60 @@ func TestMemoryCacheDeleteMissingKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+}
+
+func TestMemoryCacheConcurrentSet(t *testing.T) {
+	cache := NewMemoryCache()
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			key := fmt.Sprintf("key-%d", i)
+
+			err := cache.Set(key, []byte("value"))
+			if err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+func TestMemoryCacheConcurrentOperations(t *testing.T) {
+	cache := NewMemoryCache()
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < 100; i++ {
+		wg.Add(3)
+
+		go func(i int) {
+			defer wg.Done()
+
+			key := fmt.Sprintf("key-%d", i)
+			cache.Set(key, []byte("value"))
+		}(i)
+
+		go func(i int) {
+			defer wg.Done()
+
+			key := fmt.Sprintf("key-%d", i)
+			cache.Get(key)
+		}(i)
+
+		go func(i int) {
+			defer wg.Done()
+
+			key := fmt.Sprintf("key-%d", i)
+			cache.Delete(key)
+		}(i)
+	}
+
+	wg.Wait()
 }
