@@ -8,15 +8,15 @@ import (
 	"distributed-cache/internal/cache"
 )
 
-func Start(c *cache.MemoryCache) error {
-	listener, err := net.Listen("tcp", ":8000")
+func Start(c *cache.MemoryCache, address string) error {
+	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
 	}
 
 	defer listener.Close()
 
-	fmt.Println("Server listening on :8000")
+	fmt.Println("Server listening on", address)
 
 	for {
 		conn, err := listener.Accept()
