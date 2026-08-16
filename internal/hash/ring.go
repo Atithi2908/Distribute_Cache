@@ -38,9 +38,13 @@ func (h *HashRing) AddNode(node string) {
 	})
 }
 
-func (h *HashRing) GetNode(key string) string {
-	if len(h.hashKeys) == 0 {
-		return ""
+func (h *HashRing) GetNodes(key string, count int) []string {
+	if len(h.hashKeys) == 0 || count <= 0 {
+		return nil
+	}
+
+	if count > len(h.nodes) {
+		count = len(h.nodes)
 	}
 
 	hash := hashKey(key)
@@ -53,7 +57,31 @@ func (h *HashRing) GetNode(key string) string {
 		index = 0
 	}
 
-	return h.nodes[h.hashKeys[index]]
+	result := make([]string, 0, count)
+	seen := make(map[string]bool)
+
+	for len(result) < count {
+		node := h.nodes[h.hashKeys[index]]
+
+		if !seen[node] {
+			result = append(result, node)
+			seen[node] = true
+		}
+
+		index = (index + 1) % len(h.hashKeys)
+	}
+
+	return result
+}
+
+func (h *HashRing) GetNode(key string) string {
+	nodes := h.GetNodes(key, 1)
+
+	if len(nodes) == 0 {
+		return ""
+	}
+
+	return nodes[0]
 }
 
 func (h *HashRing) RemoveNode(node string) {

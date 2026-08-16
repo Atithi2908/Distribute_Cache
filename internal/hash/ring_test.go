@@ -84,3 +84,29 @@ func TestNodeAddition(t *testing.T) {
 		}
 	}
 }
+
+func TestGetNodes(t *testing.T) {
+	ring := NewHashRing(100)
+
+	ring.AddNode("node-A")
+	ring.AddNode("node-B")
+	ring.AddNode("node-C")
+
+	nodes := ring.GetNodes("user123", 3)
+
+	if len(nodes) != 3 {
+		t.Fatalf("expected 3 nodes, got %d", len(nodes))
+	}
+
+	seen := make(map[string]bool)
+
+	for _, node := range nodes {
+		if seen[node] {
+			t.Errorf("duplicate node: %s", node)
+		}
+
+		seen[node] = true
+
+		t.Logf("selected node: %s", node)
+	}
+}

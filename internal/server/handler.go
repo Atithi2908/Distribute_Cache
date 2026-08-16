@@ -39,6 +39,14 @@ func handleRequest(conn net.Conn, c *cache.MemoryCache, req Request) {
 			break
 		}
 
+	case "DUMP":
+		data := c.All()
+
+		for key, value := range data {
+			fmt.Fprintf(conn, "%s %s\n", key, string(value))
+		}
+
+		fmt.Fprintln(conn, "END")
 		response = Response{Status: "OK"}
 	}
 

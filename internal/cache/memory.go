@@ -39,3 +39,16 @@ func (c *MemoryCache) Delete(key string) error {
 	delete(c.store, key)
 	return nil
 }
+
+func (c *MemoryCache) All() map[string][]byte {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	result := make(map[string][]byte)
+
+	for key, value := range c.store {
+		result[key] = append([]byte(nil), value...)
+	}
+
+	return result
+}

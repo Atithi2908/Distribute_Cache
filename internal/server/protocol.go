@@ -24,6 +24,7 @@ func ParseRequest(input string) (Request, error) {
 	}
 
 	switch parts[0] {
+
 	case "SET":
 		if len(parts) != 3 {
 			return Request{}, errors.New("invalid SET command")
@@ -43,6 +44,15 @@ func ParseRequest(input string) (Request, error) {
 		return Request{
 			Command: parts[0],
 			Key:     parts[1],
+		}, nil
+
+	case "DUMP":
+		if len(parts) != 1 {
+			return Request{}, errors.New("invalid DUMP command")
+		}
+
+		return Request{
+			Command: "DUMP",
 		}, nil
 
 	default:
