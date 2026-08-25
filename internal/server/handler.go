@@ -12,7 +12,12 @@ func handleRequest(conn net.Conn, c *cache.MemoryCache, req Request) {
 
 	switch req.Command {
 	case "SET":
-		err := c.Set(req.Key, []byte(req.Value))
+		var err error
+		if req.TTL > 0 {
+			err = c.SetWithTTL(req.Key, []byte(req.Value), req.TTL)
+		} else {
+			err = c.Set(req.Key, []byte(req.Value))
+		}
 		if err != nil {
 			response = Response{Status: "ERROR"}
 			break

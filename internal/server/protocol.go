@@ -2,13 +2,16 @@ package server
 
 import (
 	"errors"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Request struct {
 	Command string
 	Key     string
 	Value   string
+	TTL     time.Duration
 }
 
 type Response struct {
@@ -26,15 +29,26 @@ func ParseRequest(input string) (Request, error) {
 	switch parts[0] {
 
 	case "SET":
-		if len(parts) != 3 {
-			return Request{}, errors.New("invalid SET command")
+		if len(parts) == 3 {
+			return Request{
+				Command: "SET",
+				Key:     parts[1],
+				Value:   parts[2],
+			}, nil
 		}
-
-		return Request{
-			Command: "SET",
-			Key:     parts[1],
-			Value:   parts[2],
-		}, nil
+		if len(parts) == 4 {
+			ttlSecs, err := strconv.Atoi(parts[3])
+			if err != nil || ttlSecs <= 0 {
+				return Request{}, errors.New("invalid TTL value")
+			}
+			return Request{
+				Command: "SET",
+				Key:     parts[1],
+				Value:   parts[2],
+				TTL:     time.Duration(ttlSecs) * time.Second,
+			}, nil
+		}
+		return Request{}, errors.New("invalid SET command")
 
 	case "GET", "DELETE":
 		if len(parts) != 2 {

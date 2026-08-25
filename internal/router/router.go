@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Router struct {
@@ -14,22 +15,28 @@ type Router struct {
 	nodes  []string
 	health map[string]bool
 	mu     sync.RWMutex
+
+	pools  map[string]chan net.Conn
+	poolMu sync.Mutex
 }
 
 func NewRouter(nodes []string) *Router {
 	ring := hash.NewHashRing(100)
 
 	health := make(map[string]bool)
+	pools := make(map[string]chan net.Conn)
 
 	for _, node := range nodes {
 		ring.AddNode(node)
 		health[node] = true
+		pools[node] = make(chan net.Conn, 20)
 	}
 
 	return &Router{
 		ring:   ring,
 		nodes:  nodes,
 		health: health,
+		pools:  pools,
 	}
 }
 
@@ -66,12 +73,25 @@ func (r *Router) Send(command string, key string) (string, error) {
 }
 
 func (r *Router) Set(key string, value []byte) error {
+	return r.SetWithTTL(key, value, 0)
+}
+
+func (r *Router) SetWithTTL(key string, value []byte, ttl time.Duration) error {
 	nodes := r.ring.GetNodes(key, 3)
 
 	var wg sync.WaitGroup
 	successes := 0
 
 	var mu sync.Mutex
+
+	cmdStr := fmt.Sprintf("SET %s %s", key, string(value))
+	if ttl > 0 {
+		secs := int(ttl.Seconds())
+		if secs <= 0 {
+			secs = 1
+		}
+		cmdStr = fmt.Sprintf("SET %s %s %d", key, string(value), secs)
+	}
 
 	for _, node := range nodes {
 		r.mu.RLock()
@@ -87,10 +107,7 @@ func (r *Router) Set(key string, value []byte) error {
 		go func(node string) {
 			defer wg.Done()
 
-			_, err := r.sendToNode(
-				node,
-				fmt.Sprintf("SET %s %s", key, string(value)),
-			)
+			_, err := r.sendToNode(node, cmdStr)
 
 			if err != nil {
 				r.markUnhealthy(node)
@@ -178,22 +195,64 @@ func (r *Router) Delete(key string) (string, error) {
 	return r.Send("DELETE "+key, key)
 }
 
+func (r *Router) getConn(node string) (net.Conn, error) {
+	r.poolMu.Lock()
+	pool, ok := r.pools[node]
+	r.poolMu.Unlock()
+
+	if ok {
+		select {
+		case conn := <-pool:
+			return conn, nil
+		default:
+		}
+	}
+
+	return net.DialTimeout("tcp", node, 2*time.Second)
+}
+
+func (r *Router) putConn(node string, conn net.Conn) {
+	r.poolMu.Lock()
+	pool, ok := r.pools[node]
+	r.poolMu.Unlock()
+
+	if !ok {
+		conn.Close()
+		return
+	}
+
+	select {
+	case pool <- conn:
+	default:
+		conn.Close()
+	}
+}
+
 func (r *Router) sendToNode(node string, command string) (string, error) {
-	conn, err := net.Dial("tcp", node)
+	conn, err := r.getConn(node)
 	if err != nil {
 		return "", err
 	}
 
-	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 
 	_, err = fmt.Fprintf(conn, "%s\n", command)
 	if err != nil {
+		conn.Close()
 		return "", err
 	}
 
 	reader := bufio.NewReader(conn)
+	resp, err := reader.ReadString('\n')
+	if err != nil {
+		conn.Close()
+		return "", err
+	}
 
-	return reader.ReadString('\n')
+	_ = conn.SetDeadline(time.Time{})
+	r.putConn(node, conn)
+
+	return resp, nil
 }
 
 func (r *Router) markUnhealthy(node string) {
@@ -207,14 +266,14 @@ func (r *Router) markUnhealthy(node string) {
 
 func (r *Router) HealthCheck() {
 	for _, node := range r.nodes {
-		conn, err := net.Dial("tcp", node)
+		conn, err := r.getConn(node)
 
 		if err != nil {
 			r.markUnhealthy(node)
 			continue
 		}
 
-		conn.Close()
+		r.putConn(node, conn)
 
 		r.mu.Lock()
 		if !r.health[node] {
@@ -231,12 +290,12 @@ func (r *Router) RecoverNode(node string, sourceNodes []string) error {
 			continue
 		}
 
-		conn, err := net.Dial("tcp", source)
+		conn, err := r.getConn(source)
 		if err != nil {
 			continue
 		}
 
-		conn.Close()
+		r.putConn(source, conn)
 
 		return nil
 	}
@@ -245,25 +304,26 @@ func (r *Router) RecoverNode(node string, sourceNodes []string) error {
 }
 
 func (r *Router) DumpNode(node string) (map[string]string, error) {
-	conn, err := net.Dial("tcp", node)
+	conn, err := r.getConn(node)
 	if err != nil {
 		return nil, err
 	}
 
-	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	_, err = fmt.Fprintln(conn, "DUMP")
 	if err != nil {
+		conn.Close()
 		return nil, err
 	}
 
 	reader := bufio.NewReader(conn)
-
 	data := make(map[string]string)
 
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
+			conn.Close()
 			return nil, err
 		}
 
@@ -279,6 +339,9 @@ func (r *Router) DumpNode(node string) (map[string]string, error) {
 			data[parts[0]] = parts[1]
 		}
 	}
+
+	_ = conn.SetDeadline(time.Time{})
+	r.putConn(node, conn)
 
 	return data, nil
 }
@@ -316,4 +379,16 @@ func (r *Router) ShouldStore(key string, node string) bool {
 	}
 
 	return false
+}
+
+func (r *Router) Close() {
+	r.poolMu.Lock()
+	defer r.poolMu.Unlock()
+
+	for _, pool := range r.pools {
+		close(pool)
+		for conn := range pool {
+			conn.Close()
+		}
+	}
 }

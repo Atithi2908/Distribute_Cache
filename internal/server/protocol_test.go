@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestParseRequest(t *testing.T) {
 	tests := []struct {
@@ -8,6 +11,7 @@ func TestParseRequest(t *testing.T) {
 		command string
 		key     string
 		value   string
+		ttl     time.Duration
 		wantErr bool
 	}{
 		{
@@ -15,6 +19,21 @@ func TestParseRequest(t *testing.T) {
 			command: "SET",
 			key:     "name",
 			value:   "Atithi",
+		},
+		{
+			input:   "SET name Atithi 10",
+			command: "SET",
+			key:     "name",
+			value:   "Atithi",
+			ttl:     10 * time.Second,
+		},
+		{
+			input:   "SET name Atithi invalid",
+			wantErr: true,
+		},
+		{
+			input:   "SET name Atithi -5",
+			wantErr: true,
 		},
 		{
 			input:   "GET name",
@@ -47,13 +66,14 @@ func TestParseRequest(t *testing.T) {
 		}
 
 		if err != nil {
-			t.Errorf("unexpected error: %v", err)
+			t.Errorf("unexpected error for %q: %v", tt.input, err)
 		}
 
 		if req.Command != tt.command ||
 			req.Key != tt.key ||
-			req.Value != tt.value {
-			t.Errorf("unexpected request: %+v", req)
+			req.Value != tt.value ||
+			req.TTL != tt.ttl {
+			t.Errorf("unexpected request for %q: %+v", tt.input, req)
 		}
 	}
 }
